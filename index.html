@@ -1,237 +1,200 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8" />
-  <title>画像ブロック崩し（レスポンシブ＆タイム計測）</title>
+  <meta charset="UTF-8">
+  <title>画像ブロック崩し（iPhone最適化）</title>
   <style>
     html, body {
-      margin: 0; padding: 0; height: 100%;
+      margin: 0;
+      padding: 0;
       background: #000;
-      touch-action: none; /* スクロール禁止 */
-      -webkit-tap-highlight-color: transparent; /* iOS青ハイライト消し */
-    }
-    body {
-      display: flex;
-      justify-content: center;
-      align-items: center;
+      height: 100%;
+      overflow: hidden;
     }
     canvas {
-      background: #111;
       display: block;
-      /* CSSでサイズはjsで調整 */
-      max-width: 100vw;
-      max-height: 100vh;
+      margin: auto;
+      background: #111;
+      width: 100vw;    /* 横幅を画面幅に合わせる */
+      height: auto;     /* アスペクト比維持（縦を自動） */
       touch-action: none;
-      border-radius: 6px;
-      box-shadow: 0 0 10px #0ff;
     }
   </style>
 </head>
 <body>
-  <canvas id="game"></canvas>
+<canvas id="game"></canvas>
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
 
-  <script>
-    const canvas = document.getElementById('game');
-    const ctx = canvas.getContext('2d');
+// 基本解像度（ゲーム内論理サイズ）
+const gameWidth = 360;
+const gameHeight = 600;
+canvas.width = gameWidth * window.devicePixelRatio;
+canvas.height = gameHeight * window.devicePixelRatio;
+ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
 
-    const blockSize = 16;
-    const cols = 15;
-    const rows = 15;
-    const blockImage = new Image();
-    blockImage.src = "image.png";
+// ゲーム描画はこの論理サイズで行う
+canvas.style.width = `${gameWidth}px`;
+canvas.style.height = `${gameHeight}px`;
 
-    let blocks = [];
-    let balls = [{x: 120, y: 300, vx: 2, vy: -2, r: 5}];
-    let paddle = {x: 90, y: 380, w: 60, h: 10};
-    let items = []; // アイテム（ボール増加）
-    let startTime = 0;
+// --- 以下、前のゲームコードを移植 ---
+const blockSize = 16;
+const cols = Math.floor(gameWidth / blockSize);
+const rows = 15;
+const blockImage = new Image();
+blockImage.src = "image.png";
 
-    // --- レスポンシブ＆高DPI対応 ---
-    function resizeCanvas() {
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
-      const maxWidth = 414; // iPhone11 横幅
-      const width = Math.min(maxWidth, vw);
-      const height = width * (5 / 3); // 240:400 = 3:5 比率
+let blocks = [];
+let balls = [{x: gameWidth / 2, y: 300, vx: 2, vy: -2, r: 5}];
+let paddle = {x: 150, y: gameHeight - 20, w: 60, h: 10};
+let items = [];
+let startTime = performance.now();
 
-      // CSSサイズ
-      canvas.style.width = width + 'px';
-      canvas.style.height = height + 'px';
+document.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  let mx = e.clientX - rect.left;
+  paddle.x = Math.max(0, Math.min(mx - paddle.w / 2, gameWidth - paddle.w));
+});
 
-      // 内部解像度設定（デバイスピクセル比対応）
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = width * dpr;
-      canvas.height = height * dpr;
+canvas.addEventListener('touchstart', e => {
+  const touchX = e.touches[0].clientX;
+  const rect = canvas.getBoundingClientRect();
+  const x = touchX - rect.left;
+  if (x < gameWidth / 2) {
+    paddle.x -= 30;
+  } else {
+    paddle.x += 30;
+  }
+  paddle.x = Math.max(0, Math.min(paddle.x, gameWidth - paddle.w));
+});
 
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.scale(dpr, dpr);
-
-      // パドル縦位置も調整
-      paddle.y = height - 20;
+blockImage.onload = () => {
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      blocks.push({
+        x: x * blockSize,
+        y: y * blockSize,
+        hit: false,
+        imgX: x * blockSize,
+        imgY: y * blockSize
+      });
     }
-    window.addEventListener('resize', resizeCanvas);
+  }
+  requestAnimationFrame(loop);
+};
 
-    // --- 初期化 ---
-    blockImage.onload = () => {
-      blocks = [];
-      for(let y=0; y<rows; y++) {
-        for(let x=0; x<cols; x++) {
-          blocks.push({
-            x: x * blockSize,
-            y: y * blockSize,
-            hit: false,
-            imgX: x * blockSize,
-            imgY: y * blockSize,
-          });
-        }
-      }
-      startTime = performance.now();
-      resizeCanvas();
-      requestAnimationFrame(loop);
-    };
+function loop() {
+  ctx.clearRect(0, 0, gameWidth, gameHeight);
 
-    // --- 操作 ---
+  const elapsed = (performance.now() - startTime) / 1000;
+  ctx.fillStyle = "#fff";
+  ctx.font = "14px monospace";
+  ctx.fillText(`Time: ${elapsed.toFixed(1)}s`, 10, gameHeight - 10);
 
-    // マウス移動でパドル制御（PC用）
-    document.addEventListener('mousemove', e => {
-      const rect = canvas.getBoundingClientRect();
-      let mx = e.clientX - rect.left;
-      paddle.x = Math.min(Math.max(0, mx - paddle.w/2), canvas.width / (window.devicePixelRatio||1) - paddle.w);
-    });
+  let newBalls = [];
+  for (let ball of balls) {
+    ball.x += ball.vx;
+    ball.y += ball.vy;
 
-    // タッチでパドル左右移動（スマホ用）
-    canvas.addEventListener('touchmove', e => {
-      e.preventDefault();
-      const rect = canvas.getBoundingClientRect();
-      const touchX = e.touches[0].clientX - rect.left;
-      paddle.x = Math.min(Math.max(0, touchX - paddle.w/2), canvas.width / (window.devicePixelRatio||1) - paddle.w);
-    }, { passive: false });
+    if (ball.x < ball.r || ball.x > gameWidth - ball.r) ball.vx *= -1;
+    if (ball.y < ball.r) ball.vy *= -1;
 
-    // --- ゲームループ ---
-    function loop() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      const elapsed = (performance.now() - startTime) / 1000;
-
-      // --- タイム表示 左下 ---
-      ctx.fillStyle = '#0ff';
-      ctx.font = '14px monospace';
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'bottom';
-      ctx.fillText(`Time: ${elapsed.toFixed(1)}s`, 10, canvas.height / (window.devicePixelRatio || 1) - 10);
-
-      // --- ボール移動と当たり判定 ---
-      let newBalls = [];
-      for(let ball of balls) {
-        ball.x += ball.vx;
-        ball.y += ball.vy;
-
-        // 壁判定（左右上下）
-        if(ball.x < ball.r) { ball.x = ball.r; ball.vx *= -1; }
-        if(ball.x > canvas.width/(window.devicePixelRatio||1) - ball.r) { ball.x = canvas.width/(window.devicePixelRatio||1) - ball.r; ball.vx *= -1; }
-        if(ball.y < ball.r) { ball.y = ball.r; ball.vy *= -1; }
-
-        // パドル判定
-        if(ball.y + ball.r >= paddle.y &&
-          ball.x >= paddle.x &&
-          ball.x <= paddle.x + paddle.w) {
-          ball.vy *= -1;
-          ball.y = paddle.y - ball.r;
-        }
-
-        // ブロック判定
-        for(let block of blocks) {
-          if(block.hit) continue;
-          if(ball.x > block.x && ball.x < block.x + blockSize &&
-             ball.y > block.y && ball.y < block.y + blockSize) {
-            block.hit = true;
-            ball.vy *= -1;
-
-            // ボール少しスピードアップ
-            for(let b of balls) {
-              b.vx *= 1.03;
-              b.vy *= 1.03;
-            }
-
-            // アイテム20%で落とす
-            if(Math.random() < 0.2) {
-              items.push({x: block.x + blockSize/2, y: block.y, r: 6, vy: 2});
-            }
-            break;
-          }
-        }
-
-        if(ball.y < canvas.height / (window.devicePixelRatio || 1)) {
-          newBalls.push(ball);
-        }
-      }
-      balls = newBalls;
-
-      // --- アイテム移動 ---
-      let newItems = [];
-      for(let item of items) {
-        item.y += item.vy;
-
-        if(item.y + item.r >= paddle.y &&
-           item.x >= paddle.x &&
-           item.x <= paddle.x + paddle.w) {
-          balls.push({x: item.x, y: paddle.y - 10, vx: 2, vy: -2, r: 5});
-          continue;
-        }
-
-        if(item.y < canvas.height / (window.devicePixelRatio || 1)) {
-          newItems.push(item);
-        }
-      }
-      items = newItems;
-
-      // --- ゲームオーバー ---
-      if(balls.length === 0) {
-        alert("ゲームオーバー！");
-        document.location.reload();
-        return;
-      }
-
-      // --- クリア判定 ---
-      if(blocks.every(b => b.hit)) {
-        alert(`クリア！タイム: ${elapsed.toFixed(1)}秒`);
-        document.location.reload();
-        return;
-      }
-
-      // --- 描画 ---
-      for(let block of blocks) {
-        if(!block.hit) {
-          ctx.drawImage(
-            blockImage,
-            block.imgX, block.imgY, blockSize, blockSize,
-            block.x, block.y, blockSize, blockSize
-          );
-        }
-      }
-
-      // アイテム描画
-      for(let item of items) {
-        ctx.beginPath();
-        ctx.arc(item.x, item.y, item.r, 0, Math.PI*2);
-        ctx.fillStyle = "#0f0";
-        ctx.fill();
-      }
-
-      // パドル描画
-      ctx.fillStyle = "#0ff";
-      ctx.fillRect(paddle.x, paddle.y, paddle.w, paddle.h);
-
-      // ボール描画
-      for(let ball of balls) {
-        ctx.beginPath();
-        ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI*2);
-        ctx.fillStyle = "#f0f";
-        ctx.fill();
-      }
-
-      requestAnimationFrame(loop);
+    if (
+      ball.y + ball.r >= paddle.y &&
+      ball.x >= paddle.x &&
+      ball.x <= paddle.x + paddle.w
+    ) {
+      ball.vy *= -1;
+      ball.y = paddle.y - ball.r;
     }
-  </script>
+
+    for (let block of blocks) {
+      if (block.hit) continue;
+      if (
+        ball.x > block.x &&
+        ball.x < block.x + blockSize &&
+        ball.y > block.y &&
+        ball.y < block.y + blockSize
+      ) {
+        block.hit = true;
+        ball.vy *= -1;
+
+        for (let b of balls) {
+          b.vx *= 1.03;
+          b.vy *= 1.03;
+        }
+
+        if (Math.random() < 0.2) {
+          items.push({x: block.x + blockSize / 2, y: block.y, r: 6, vy: 2});
+        }
+
+        break;
+      }
+    }
+
+    if (ball.y < gameHeight) {
+      newBalls.push(ball);
+    }
+  }
+  balls = newBalls;
+
+  let newItems = [];
+  for (let item of items) {
+    item.y += item.vy;
+    if (
+      item.y + item.r >= paddle.y &&
+      item.x >= paddle.x &&
+      item.x <= paddle.x + paddle.w
+    ) {
+      balls.push({x: item.x, y: paddle.y - 10, vx: 2, vy: -2, r: 5});
+      continue;
+    }
+    if (item.y < gameHeight) newItems.push(item);
+  }
+  items = newItems;
+
+  if (balls.length === 0) {
+    alert("ゲームオーバー！");
+    location.reload();
+    return;
+  }
+
+  if (blocks.every(b => b.hit)) {
+    alert(`クリア！タイム: ${elapsed.toFixed(1)} 秒`);
+    location.reload();
+    return;
+  }
+
+  for (let block of blocks) {
+    if (!block.hit) {
+      ctx.drawImage(
+        blockImage,
+        block.imgX, block.imgY, blockSize, blockSize,
+        block.x, block.y, blockSize, blockSize
+      );
+    }
+  }
+
+  for (let item of items) {
+    ctx.beginPath();
+    ctx.arc(item.x, item.y, item.r, 0, Math.PI * 2);
+    ctx.fillStyle = "#0f0";
+    ctx.fill();
+  }
+
+  ctx.fillStyle = "#0ff";
+  ctx.fillRect(paddle.x, paddle.y, paddle.w, paddle.h);
+
+  for (let ball of balls) {
+    ctx.beginPath();
+    ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
+    ctx.fillStyle = "#f0f";
+    ctx.fill();
+  }
+
+  requestAnimationFrame(loop);
+}
+</script>
 </body>
 </html>
